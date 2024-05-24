@@ -108,13 +108,14 @@ Items                                         | Faults         | This Script    
 [BGP Peer Profile at node level without Loopback][c5] | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
 [L3Out Route Map import/export direction][c6]         | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
 [L3Out Route Map Match Rule with missing-target][c7]  | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
-[ISIS Redistribution Metric for MPod/Msite][c8]       | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
-[BGP Route-target Type for GOLF over L2EVPN][c9]      | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
-[APIC Container Bridge IP Overlap with APIC TEP][c10] | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
-[Per-Leaf Fabric Uplink Scale Validation][c11]        | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
-[OoB Mgmt Security][c12]                              | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
-[EECDH SSL Cipher Disabled][c13]                      | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
-[BD and EPG Subnet must have matching scopes][c14]    | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[L3Out Loopback IP Overlap with L3Out Interfaces][c8] | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[ISIS Redistribution Metric for MPod/Msite][c9]       | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
+[BGP Route-target Type for GOLF over L2EVPN][c10]     | :white_check_mark: | :no_entry_sign:           | :white_check_mark:
+[APIC Container Bridge IP Overlap with APIC TEP][c11] | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[Per-Leaf Fabric Uplink Scale Validation][c12]        | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[OoB Mgmt Security][c13]                              | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[EECDH SSL Cipher Disabled][c14]                      | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
+[BD and EPG Subnet must have matching scopes][c15]    | :white_check_mark: | :no_entry_sign:           | :no_entry_sign:
 
 
 [c1]: #vpc-paired-leaf-switches
@@ -124,13 +125,14 @@ Items                                         | Faults         | This Script    
 [c5]: #bgp-peer-profile-at-node-level-without-loopback
 [c6]: #l3out-route-map-importexport-direction
 [c7]: #l3out-route-map-match-rule-with-missing-target
-[c8]: #isis-redistribution-metric-for-mpodmsite
-[c9]: #bgp-route-target-type-for-golf-over-l2evpn
-[c10]: #apic-container-bridge-ip-overlap-with-apic-tep
-[c11]: #fabric-uplink-scale-cannot-exceed-56-uplinks-per-leaf
-[c12]: #oob-mgmt-security
-[c13]: #eecdh-ssl-cipher
-[c14]: #bd-and-epg-subnet-must-have-matching-scopes
+[c8]: #l3out-loopback-ip-overlap-with-l3out-interfaces
+[c9]: #isis-redistribution-metric-for-mpodmsite
+[c10]: #bgp-route-target-type-for-golf-over-l2evpn
+[c11]: #apic-container-bridge-ip-overlap-with-apic-tep
+[c12]: #fabric-uplink-scale-cannot-exceed-56-uplinks-per-leaf
+[c13]: #oob-mgmt-security
+[c14]: #eecdh-ssl-cipher
+[c15]: #bd-and-epg-subnet-must-have-matching-scopes
 
 
 ### Defect Condition Checks
@@ -150,6 +152,9 @@ Items                                           | Defect       | This Script    
 [VMM Uplink Container with empty Actives][d11]  | CSCvr96408   | :white_check_mark: | :no_entry_sign:           |:no_entry_sign:
 [CoS 3 with Dynamic Packet Prioritization][d12] | CSCwf05073   | :white_check_mark: | :no_entry_sign:           |:no_entry_sign:
 [N9K-C93108TC-FX3P/FX3H Interface Down][d13]    | CSCwh81430   | :white_check_mark: | :no_entry_sign:           |:no_entry_sign:
+[Invalid FEX fabricPathEp DN References][d14]   | CSCwh68103   | :white_check_mark: | :no_entry_sign:           |:no_entry_sign:
+[LLDP Custom Interface Description][d15]        | CSCwf00416   | :white_check_mark: | :no_entry_sign:           |:no_entry_sign:
+
 
 [d1]: #ep-announce-compatibility
 [d2]: #eventmgr-db-size-defect-susceptibility
@@ -164,6 +169,8 @@ Items                                           | Defect       | This Script    
 [d11]: #vmm-uplink-container-with-empty-actives
 [d12]: #cos-3-with-dynamic-packet-prioritization
 [d13]: #n9k-c93108tc-fx3pfx3h-interface-down
+[d14]: #invalid-fex-fabricpathep-dn-references
+[d15]: #lldp-custom-interface-description
 
 
 ## General Check Details
@@ -177,9 +184,12 @@ The script performs the equivalent check by querying objects `compatRsUpgRel`.
 
 ### Compatibility (CIMC Version)
 
-The [APIC Upgrade/Downgrade Support Matrix][1] should be checked for the supported UCS HUU version for your target Cisco APIC version to make sure all server components are running the version from the supported HUU bundle.
+The script checks the minimum recommended CIMC version for the given APIC model on the target version by querying `compatRsSuppHw` objects.
 
-The script checks the minimum recommended CIMC version for the given APIC model on the target version by querying objects `compatRsSuppHw`.
+As the `compatRsSuppHw` object recommendation is strictly tied to the target software image, it is possible that the [Release Note Documentation][4] for your model/target version has a different recommendation than what the software recommends. Always check the release note of your Target version and APIC model to ensure you are getting the latest recommendations.
+
+!!! note
+    Older versions of CIMC may required multi-step CIMC upgrades to get to the identified target version. Refer to the [Cisco UCS Rack Server Upgrade Matrix][22] for the latest documentation on which steps are required and support given your current and target CIMC versions.
 
 ### Compatibility (Switch Hardware)
 
@@ -1472,6 +1482,55 @@ To avoid an unexpected behavior change after an upgrade, if the route map contex
     When a match rule reference with `missing-target` is present for a route map with type **Match Prefix AND Routing Policy** prior to the upgrade and prior to the fix of CSCwx11570, the corresponding route-map context is not functioning. However, the fact that it has not been functioning without any operational impact indicates that the route map context may not be needed in the first place. If you remove the match rule reference with `missing-target`, a new route-map sequence will be deployed based on other match conditions which may or may not be needed. Thus, it is important for you to check the original intent of the route-map context and decide how to resolve it. If the route-map context is not needed in the first place, you would need to remove the entire route-map context instead of just removing the match rule reference with `missing-target`.
 
 
+### L3Out Loopback IP Overlap with L3Out Interfaces
+
+When a loopback IP address in an L3Out is overlapping with a subnet of L3Out interfaces on the same leaf in the same VRF, only one of them (loopback or L3Out interface) is deployed even though the configuration is allowed without any faults. As a result, after an upgrade, what's deployed out of the two may change, and traffic may suddenly stop working after an upgrade because the interface that used to be deployed prior to the upgrade may be replaced with the other one.
+
+In an L3Out, there are two ways to configure a loopback IP:
+
+1. Use Router ID as Loopback IP Address.
+2. Configure an explicit loopback iP address that may be different from the router ID.
+
+Both options are configured under `Tenant > L3Out > Logical Node Profile > (node ID)` in the APIC GUI.
+
+This script checks both options to see if any of them is overlapping with the subnet configured as the L3Out interfaces under `Tenant > L3Out > Logical Node Profile > Logical Interface Profile` in the APIC GUI.
+
+Note that the overlap may happen across different L3Outs. For example, the loopback IP address is configured on `L3Out 1` on `node-101` in `VRF A` while the L3Out interface with the overlapping subnet is configrued on `L3Out 2` on the same node and the same VRF.
+
+!!! tip
+    There are other overlapping configurations like overlaps between an L3Out loopback IP address and a BD subnet. Those are, however, covered by a fault (F1425), which is validated by another check - [BD Subnets (F1425 subnet-overlap)][f13].
+
+!!! tip
+    The enhancement (CSCwa48038) was made on APIC to prevent users from doing this conflicting configuration in the first place. However, if the user already had this conflicting configuration, and proceeded with an upgrade from an older version to the version with the enhancement, the conflicting configuration remains there with the remaining risk of uncertainty where we don't know which interface will be deployed after the next upgrade.
+
+!!! example
+    Alternative to the APIC GUI, you can also check these objects for the loopback IP addresses or L3Out Interface subnets via API.
+
+    **Use Router ID as Loopback Address** in the APIC GUI corresponds to the object `l3extRsNodeL3OutAtt` with `rtrIdLoopBack` set to `yes`.
+    In this example, `node-103` is configured with a loopback IP `10.0.0.3` via L3Out `BGP` in tenant `TK`.
+
+    ```
+    admin@f1-apic1:~> moquery -c l3extRsNodeL3OutAtt | egrep 'dn|rtr'
+    dn             : uni/tn-TK/out-OSPF/lnodep-IPv4/rsnodeL3OutAtt-[topology/pod-1/node-103]
+    rtrId          : 10.0.0.3
+    rtrIdLoopBack  : no
+    dn             : uni/tn-TK/out-BGP/lnodep-IPv4/rsnodeL3OutAtt-[topology/pod-1/node-103]
+    rtrId          : 10.0.0.3
+    rtrIdLoopBack  : yes
+    ```
+
+    Configuring an explicit loopback IP address is done via the object `l3extLoopBackIfP` which is optionally configured under `l3extRsNodeL3OutAtt` when `l3extRsNodeL3OutAtt.rtrIdLoopBack` is set to `no`.
+
+    ```
+    admin@f1-apic1:~> moquery -c l3extLoopBackIfP | egrep 'dn|addr'
+    addr         : 10.0.0.103
+    dn           : uni/tn-TK/out-BGP2/lnodep-IPv4/rsnodeL3OutAtt-[topology/pod-1/node-103]/lbp-[10.0.0.103]
+    ```
+
+    Note that you need to get the corresponding VRF from the parent L3Out to see which VRF these loopbacks are deployed.
+
+
+
 ### ISIS Redistribution Metric for MPod/Msite      
 
 ISIS Redistribution Metric is used when a spine redistributes routes from another pod or site into local underlay network (ISIS). If this metric is not set to less than 63, traffic disruption may occur with an upgrade of spine swithces.
@@ -1746,6 +1805,52 @@ The problem is related only to the front-panel interfaces Ethernet 1/1- 1/48. Op
 Because of this, the target version of your upgrade must be a version with a fix of CSCwh81430 when your fabric includes those switches mentioned above. See the Field Notice [FN74085][20] for details.
 
 
+### Invalid FEX fabricPathEp DN References
+
+If you have deployed a FEX on a version prior to having validations introduced in [CSCwh68103][23], it is possible that `fabricPathEp` objects were created with an incorrect DN format. As a result, the related `infraRsHPathAtt` objects pointing to those `fabricPathEp` will also contain the invalid DN in their DN formatting given how ACI builds out object relations.
+
+Having these invalid DNs and then upgrading to a version that has the validations introduced in [CSCwh68103][23] will result in validation failures while trying to make changes to access policies, blocking new config from being accepted. The validation failure will present itself with the text `Failed to decode IfIndex, id: 0x.......`.
+
+If invalid DNs are found, first identify if the FEX IDs are still in use in case a window needs to be planned. If not in use, delete the `infraRsHPathAtt` objects having an invalid DN. 
+
+This check queries `infraRsHPathAtt` objects related to eths, then check if any have DNs which are incorrectly formatted.
+
+
+
+
+### LLDP Custom Interface Description
+
+Due to the defect [CSCwf00416][24], custom interface descriptions may override the port topology DN. In ACI LLDP should always advertise the topology DN as the port description irrespective of whether an interface description is configured or not.
+
+In cases where there is a custom interface description and a VMM-integrated deployment with deploy immediacy set to on-demand, connectivity may break on upgrade. If both of these features are enabled it is not recommended to upgrade to 6.0(1) or 6.0(2).
+
+!!! note
+    To check for any custom interface descriptions, you can use the following moquery command.
+    ```
+    apic1# moquery -c infraPortBlk -x query-target-filter=ne\(infraPortBlk.descr,""\)
+    Total Objects shown: 11
+
+    # infra.PortBlk
+    name         : portblock1
+    annotation   :
+    childAction  :
+    descr        : port 30 on Leaf 101 and 103 to FI-B      <<< Description is set
+    dn           : uni/infra/accportprof-system-port-profile-node-103/hports-system-port-selector-accbundle-VPC_FIB-typ-range/portblk-portblock1
+    --- omit ---
+    ```
+
+    To check for any VMM Domains using on-demand deploy immediacy, you can use the following moquery command.
+    ```
+    apic1# moquery -c fvRsDomAtt -x query-target-filter=and\(eq\(fvRsDomAtt.tCl,\"vmmDomP\"\),eq\(fvRsDomAtt.instrImedcy,\"lazy\"\)\)
+    Total Objects shown: 90
+
+    # fv.RsDomAtt
+    tDn                  : uni/vmmp-VMware/dom-shared-dvs
+    dn                   : uni/tn-prod/ap-inet/epg-epg1/rsdomAtt-[uni/vmmp-VMware/dom-shared-dvs]
+    instrImedcy          : lazy                            <<< deploy immediacy is on-demand
+    tCl                  : vmmDomP
+    --- omit ---
+    ```
 
 [0]: https://github.com/datacenter/ACI-Pre-Upgrade-Validation-Script
 [1]: https://www.cisco.com/c/dam/en/us/td/docs/Website/datacenter/apicmatrix/index.html
@@ -1769,3 +1874,6 @@ Because of this, the target version of your upgrade must be a version with a fix
 [19]: https://www.cisco.com/c/en/us/td/docs/dcn/aci/apic/5x/security-configuration/cisco-apic-security-configuration-guide-release-52x/https-access-52x.html
 [20]: https://www.cisco.com/c/en/us/support/docs/field-notices/740/fn74085.html
 [21]: https://bst.cloudapps.cisco.com/bugsearch/bug/CSCvv30303
+[22]: https://www.cisco.com/c/dam/en/us/td/docs/unified_computing/ucs/c/sw/CIMC-Upgrade-Downgrade-Matrix/index.html
+[23]: https://bst.cloudapps.cisco.com/bugsearch/bug/CSCwh68103
+[24]: https://bst.cloudapps.cisco.com/bugsearch/bug/CSCwf00416

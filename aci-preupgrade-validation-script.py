@@ -32,7 +32,7 @@ import sys
 import os
 import re
 
-SCRIPT_VERSION = "v2.0.0"
+SCRIPT_VERSION = "v2.1.0"
 DONE = 'DONE'
 PASS = 'PASS'
 FAIL_O = 'FAIL - OUTAGE WARNING!!'
@@ -374,16 +374,46 @@ class Connection(object):
 class IPAddress:
     """Custom IP handling class since old APICs do not have `ipaddress` module.
     """
+    @classmethod
+    def ip_to_binary(cls, ip):
+        if ':' in ip:
+            return cls.ipv6_to_binary(ip)
+        else:
+            return cls.ipv4_to_binary(ip)
+
     @staticmethod
-    def ip_to_binary(ip):
-        octets = ip.split(".")
+    def ipv4_to_binary(ipv4):
+        octets = ipv4.split(".")
         octets_bin = [format(int(octet), "08b") for octet in octets]
         return "".join(octets_bin)
 
+    @staticmethod
+    def ipv6_to_binary(ipv6):
+        HEXTET_COUNT = 8
+        _hextets = ipv6.split(":")
+        dbl_colon_index = None
+        if '' in _hextets:
+            # leading/trailing '::' results in additional '' at the beginning/end.
+            if _hextets[0] == '':
+                _hextets = _hextets[1:]
+            if _hextets[-1] == '':
+                _hextets = _hextets[:-1]
+            # Uncompress all zero hextets represented by '::'
+            dbl_colon_index = _hextets.index('')
+            skipped_hextets = HEXTET_COUNT - len(_hextets) + 1
+            hextets = _hextets[:dbl_colon_index]
+            hextets += ['0'] * skipped_hextets
+            hextets += _hextets[dbl_colon_index+1:]
+        else:
+            hextets = _hextets
+        hextets_bin = [format(int(hextet, 16), "016b") for hextet in hextets]
+        return "".join(hextets_bin)
+
     @classmethod
     def get_network_binary(cls, ip, pfxlen):
+        maxlen = 128 if ':' in ip else 32
         ip_bin = cls.ip_to_binary(ip)
-        return ip_bin[0:32-(32-int(pfxlen))]
+        return ip_bin[0:maxlen-(maxlen-int(pfxlen))]
 
     @classmethod
     def ip_in_subnet(cls, ip, subnet):
@@ -709,6 +739,7 @@ def get_vpc_nodes(**kwargs):
 
     return vpc_nodes
 
+
 def get_switch_version(**kwargs):
     """ Returns lowest switch version as AciVersion instance """
     prints("Gathering Lowest Switch Version from Firmware Repository...", end='')
@@ -727,6 +758,7 @@ def get_switch_version(**kwargs):
                 lowest_sw_ver = version
 
     return lowest_sw_ver
+
 
 def apic_cluster_health_check(index, total_checks, cversion, **kwargs):
     title = 'APIC Cluster is Fully-Fit'
@@ -1814,6 +1846,128 @@ def l3out_route_map_missing_target_check(index, total_checks, cversion, tversion
     return result
 
 
+def l3out_overlapping_loopback_check(index, total_checks, **kwargs):
+    title = 'L3Out Loopback IP Overlap With L3Out Interfaces'
+    result = FAIL_O
+    msg = ''
+    headers = ['Tenant:VRF', 'Node ID', 'Loopback IP (Tenant:L3Out:NodeP)', 'Interface IP (Tenant:L3Out:NodeP:IFP)']
+    data = []
+    recommended_action = 'Change either the loopback or L3Out interface IP subnet to avoid overlap.'
+    doc_url = 'https://datacenter.github.io/ACI-Pre-Upgrade-Validation-Script/validations/#l3out-loopback-ip-overlap-with-l3out-interfaces'
+    print_title(title, index, total_checks)
+
+    tn_regex = r'uni/tn-(?P<tenant>[^/]+)/'
+    path_regex = r'topology/pod-(?P<pod>\d+)/(?:prot)?paths-(?P<node1>\d+)(?:-(?P<node2>\d+))?'
+
+    vrfs = defaultdict(dict)
+    api = 'l3extOut.json'
+    api += '?rsp-subtree=full'
+    api += '&rsp-subtree-class=l3extRsEctx,l3extRsNodeL3OutAtt,l3extLoopBackIfP,l3extRsPathL3OutAtt,l3extMember'
+    l3outs = icurl('class', api)
+    for l3out in l3outs:
+        vrf = ""
+        loopback_ips = defaultdict(dict)
+        interface_ips = defaultdict(list)
+        for child in l3out['l3extOut'].get('children', []):
+            dn = re.search(tn_regex, l3out['l3extOut']['attributes']['dn'])
+            tenant_name = dn.group('tenant') if dn else ""
+            l3out_name = l3out['l3extOut']['attributes']['name']
+            # Get VRF
+            if child.get('l3extRsEctx'):
+                vrf_tdn = re.search(tn_regex, child['l3extRsEctx']['attributes']['tDn'])
+                if vrf_tdn:
+                    vrf = ':'.join([vrf_tdn.group('tenant'), child['l3extRsEctx']['attributes']['tnFvCtxName']])
+                else:
+                    vrf = child['l3extRsEctx']['attributes']['tDn']
+            # Get loopback and interface IPs
+            elif child.get('l3extLNodeP'):
+                nodep_name = child['l3extLNodeP']['attributes']['name']
+                for np_child in child['l3extLNodeP'].get('children', []):
+                    # Get the loopback IP for each node
+                    if np_child.get('l3extRsNodeL3OutAtt'):
+                        node = np_child['l3extRsNodeL3OutAtt']
+                        m = re.search(node_regex, node['attributes']['tDn'])
+                        if not m:
+                            logging.error('Failed to parse tDn - %s', node['attributes']['tDn'])
+                            continue
+                        node_id = m.group('node')
+
+                        loopback_ip = ''
+                        if node['attributes']['rtrIdLoopBack'] == 'yes':
+                            loopback_ip = node['attributes']['rtrId']
+                        else:
+                            for lb in node.get('children', []):
+                                # There should be only one l3extLoopBackIfP per node
+                                if lb.get('l3extLoopBackIfP'):
+                                    loopback_ip = lb['l3extLoopBackIfP']['attributes']['addr']
+                                    break
+                        if loopback_ip:
+                            loopback_ips[node_id] = {
+                                'addr': loopback_ip,
+                                'config': ':'.join([tenant_name, l3out_name, nodep_name]),
+                            }
+                    # Get interface IPs for each node
+                    elif np_child.get('l3extLIfP'):
+                        ifp_name = np_child['l3extLIfP']['attributes']['name']
+                        for ifp_child in np_child['l3extLIfP'].get('children', []):
+                            if not ifp_child.get('l3extRsPathL3OutAtt'):
+                                continue
+                            port = ifp_child['l3extRsPathL3OutAtt']
+                            m = re.search(path_regex, port['attributes']['tDn'])
+                            if not m:
+                                logging.error('Failed to parse tDn - %s', port['attributes']['tDn'])
+                                continue
+                            node1_id = m.group('node1')
+                            node2_id = m.group('node2')
+                            config = ':'.join([tenant_name, l3out_name, nodep_name, ifp_name])
+                            # non-vPC port
+                            if not node2_id:
+                                interface_ips[node1_id].append({
+                                    'addr': port['attributes']['addr'],
+                                    'config': config,
+                                })
+                            # vPC port
+                            else:
+                                for member in port.get('children', []):
+                                    if not member.get('l3extMember'):
+                                        continue
+                                    node_id = node1_id
+                                    if member['l3extMember']['attributes']['side'] == 'B':
+                                        node_id = node2_id
+                                    interface_ips[node_id].append({
+                                        'addr': member['l3extMember']['attributes']['addr'],
+                                        'config': config,
+                                    })
+        for node in loopback_ips:
+            if not vrfs[vrf].get(node):
+                vrfs[vrf][node] = {}
+            vrfs[vrf][node]['loopback'] = loopback_ips[node]
+        for node in interface_ips:
+            if not vrfs[vrf].get(node):
+                vrfs[vrf][node] = {}
+            vrfs[vrf][node]['interfaces'] = vrfs[vrf][node].get('interfaces', []) + interface_ips[node]
+
+    # Check overlaps
+    for vrf in vrfs:
+        for node in vrfs[vrf]:
+            loopback = vrfs[vrf][node].get('loopback')
+            interfaces = vrfs[vrf][node].get('interfaces')
+            if not loopback or not interfaces:
+                continue
+            for interface in interfaces:
+                if IPAddress.ip_in_subnet(loopback['addr'], interface['addr']):
+                    data.append([
+                        vrf,
+                        node,
+                        '{} ({})'.format(loopback['addr'], loopback['config']),
+                        '{} ({})'.format(interface['addr'], interface['config']),
+                    ])
+    if not data:
+        result = PASS
+    print_result(title, result, msg, headers, data, recommended_action=recommended_action, doc_url=doc_url)
+    return result
+
+
 def bgp_peer_loopback_check(index, total_checks, **kwargs):
     """ Implementation change due to CSCvm28482 - 4.1(2) """
     title = 'BGP Peer Profile at node level without Loopback'
@@ -2191,10 +2345,10 @@ def cimc_compatibilty_check(index, total_checks, tversion, **kwargs):
     title = 'APIC CIMC Compatibility'
     result = FAIL_UF
     msg = ''
-    headers = ["Node ID", "Current CIMC version", "Minimum Recommended CIMC Version"]
+    headers = ["Node ID", "Model", "Current CIMC version", "Catalog Recommended CIMC Version", "Warning"]
     data = []
-    recommended_action = 'Plan to upgrade CIMC version prior to APIC upgrade'
-    doc_url = '"Compatibility (CIMC Versions)" from Pre-Upgrade Checklists'
+    recommended_action = 'Check Release note of APIC Model/version for latest recommendations.'
+    doc_url = 'https://datacenter.github.io/ACI-Pre-Upgrade-Validation-Script/validations/#compatibility-cimc-version'
     print_title(title, index, total_checks)
     apic_obj = icurl('class', 'eqptCh.json?query-target-filter=wcard(eqptCh.descr,"APIC")')
     if apic_obj and tversion:
@@ -2208,12 +2362,13 @@ def cimc_compatibilty_check(index, total_checks, tversion, **kwargs):
                                        "/rssuppHw-[uni/fabric/compcat-default/ctlrhw-" + model + "].json"
                     compatMo = icurl('mo', compat_lookup_dn)
                     recommended_cimc = compatMo[0]['compatRsSuppHw']['attributes']['cimcVersion']
+                    warning = ""
                     if compatMo and recommended_cimc:
-                        if is_firstver_gt_secondver(current_cimc, recommended_cimc):
-                            pass
-                        else:
+                        if not is_firstver_gt_secondver(current_cimc, "3.0(3a)"):
+                            warning = "Multi-step Upgrade may be required, check UCS CIMC Matrix."
+                        if not is_firstver_gt_secondver(current_cimc, recommended_cimc):
                             nodeid = eqptCh['eqptCh']['attributes']['dn'].split('/')[2]
-                            data.append([nodeid, current_cimc, recommended_cimc])
+                            data.append([nodeid, apic_model, current_cimc, recommended_cimc, warning])
 
             if not data:
                 result = PASS
@@ -2864,6 +3019,7 @@ def oob_mgmt_security_check(index, total_checks, cversion, tversion, **kwargs):
     print_result(title, result, msg, headers, data, recommended_action=recommended_action, doc_url=doc_url)
     return result
 
+
 def mini_aci_6_0_2_check(index, total_checks, cversion, tversion, **kwargs):
     title = 'Mini ACI Upgrade to 6.0(2)+'
     result = FAIL_UF
@@ -2894,7 +3050,6 @@ def mini_aci_6_0_2_check(index, total_checks, cversion, tversion, **kwargs):
         result = PASS
     print_result(title, result, msg, headers, data, recommended_action=recommended_action, doc_url=doc_url)
     return result
-
 
 
 def sup_a_high_memory_check(index, total_checks, tversion, **kwargs):
@@ -3264,6 +3419,94 @@ def subnet_scope_check(index, total_checks, cversion, **kwargs):
     return result
 
 
+def invalid_fex_rs_check(index, total_checks, **kwargs):
+    title = 'Invalid FEX Relation Source'
+    result = PASS
+    msg = ''
+    headers = ["FEX ID", "Invalid DN"]
+    data = []
+    recommended_action = 'Identify if FEX ID in use, then contact TAC for cleanup'
+    doc_url = 'https://datacenter.github.io/ACI-Pre-Upgrade-Validation-Script/validations#invalid-fex-fabricpathep-dn-references'
+    print_title(title, index, total_checks)
+
+
+    hpath_api =  'infraRsHPathAtt.json?query-target-filter=wcard(infraRsHPathAtt.dn,"eth")'
+    infraRsHPathAtt = icurl('class', hpath_api)
+
+    for rs in infraRsHPathAtt:
+        dn = rs["infraRsHPathAtt"]["attributes"]["dn"]
+        m = re.search(r'eth(?P<fex>\d+)\/\d\/\d', dn)
+        if m:
+            fex_id = m.group('fex')
+            data.append([fex_id, dn])
+
+    if data:
+        result = FAIL_UF
+
+    print_result(title, result, msg, headers, data, recommended_action=recommended_action, doc_url=doc_url)
+    return result
+
+
+def lldp_custom_int_description_defect_check(index, total_checks, tversion, **kwargs):
+    title = 'LLDP Custom Interface Description Defect'
+    result = PASS
+    msg = ''
+    headers = ["Potential Defect"]
+    data = []
+    recommended_action = 'Target version is not recommended; Custom interface descriptions and lazy VMM domain attachments found.'
+    doc_url = 'https://datacenter.github.io/ACI-Pre-Upgrade-Validation-Script/validations/#lldp-custom-interface-description'
+    print_title(title, index, total_checks)
+
+    if not tversion:
+        print_result(title, MANUAL, "Target version not supplied. Skipping.")
+        return MANUAL
+
+    if tversion.major1 == '6' and tversion.older_than('6.0(3a)'):
+        custom_int_count = icurl('class', 'infraPortBlk.json?query-target-filter=ne(infraPortBlk.descr,"")&rsp-subtree-include=count')[0]['moCount']['attributes']['count']
+        lazy_vmm_count = icurl('class','fvRsDomAtt.json?query-target-filter=and(eq(fvRsDomAtt.tCl,"vmmDomP"),eq(fvRsDomAtt.resImedcy,"lazy"))&rsp-subtree-include=count')[0]['moCount']['attributes']['count']
+
+        if int(custom_int_count) > 0 and int(lazy_vmm_count) > 0:
+            result = FAIL_O
+            data.append(['CSCwf00416'])
+
+    print_result(title, result, msg, headers, data, recommended_action=recommended_action, doc_url=doc_url)
+    return result
+
+def sixty_four_and_thirty_two_memory_image_check(index, total_checks, cversion, tversion, **kwargs):
+	title = '32 and 64-Bit Firmware Image for Switches'
+	result = FAIL_O
+	msg = ''
+	headers = ["Node ID", "Node Name", "Recommended Action"]
+	data = []
+	recommended_action = 'Upload the 32 or 64 bit Switch Image missing to the Firmware repository'
+	doc_url = 'https://datacenter.github.io/ACI-Pre-Upgrade-Validation-Script/validations/'
+	print_title(title, index, total_checks)
+	switchVersion_regex = r'n9000-1(?P<version>[^$])'
+
+	if tversion.newer_than("6.0(2a)"):
+		is32BUp = False
+		is64BUp = False
+		firmwareFiles = icurl('class', 'firmwareFirmware.json')
+		for firmwareFile in firmwareFiles:
+			switchVersion = 'n9000-1' + tversion.version
+			if (switchVersion == firmwareFile['firmwareFirmware']['attributes']['fullVersion'] and firmwareFile['firmwareFirmware']['attributes']['bitInfo'] == '32'):
+				is32BUp = True
+				
+			elif (switchVersion == firmwareFile['firmwareFirmware']['attributes']['fullVersion'] and firmwareFile['firmwareFirmware']['attributes']['bitInfo'] == '64'):
+				is64BUp = True
+				
+		if (is32BUp == True and is64BUp == True):
+			result = PASS
+		else:
+			data.append[recommended_action]
+			
+	else: #Target Version prior to 6.0-2 
+		result = NA
+	
+		
+	print_result(title, result, msg, headers, data, doc_url=doc_url)
+	return result
+
 if __name__ == "__main__":
     prints('    ==== %s%s, Script Version %s  ====\n' % (ts, tz, SCRIPT_VERSION))
     prints('!!!! Check https://github.com/datacenter/ACI-Pre-Upgrade-Validation-Script for Latest Release !!!!\n')
@@ -3333,6 +3576,7 @@ if __name__ == "__main__":
         bgp_peer_loopback_check,
         l3out_route_map_direction_check,
         l3out_route_map_missing_target_check,
+        l3out_overlapping_loopback_check,
         intersight_upgrade_status_check,
         isis_redis_metric_mpod_msite_check,
         bgp_golf_route_target_type_check,
@@ -3356,6 +3600,8 @@ if __name__ == "__main__":
         vmm_active_uplinks_check,
         fabric_dpp_check,
         n9k_c93108tc_fx3p_interface_down_check,
+        invalid_fex_rs_check,
+        lldp_custom_int_description_defect_check,
 
     ]
     summary = {PASS: 0, FAIL_O: 0, FAIL_UF: 0, ERROR: 0, MANUAL: 0, POST: 0, NA: 0, 'TOTAL': len(checks)}
